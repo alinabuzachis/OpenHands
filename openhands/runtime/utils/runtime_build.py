@@ -137,8 +137,9 @@ def build_runtime_image(
     See https://docs.all-hands.dev/usage/architecture/runtime for more details.
     """
     if build_folder is None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            result = build_runtime_image_in_folder(
+       temp_dir = tempfile.mkdtemp()
+       try:
+         result = build_runtime_image_in_folder(
                 base_image=base_image,
                 runtime_builder=runtime_builder,
                 build_folder=Path(temp_dir),
@@ -149,7 +150,11 @@ def build_runtime_image(
                 extra_build_args=extra_build_args,
                 enable_browser=enable_browser,
             )
-            return result
+         return result
+       finally:
+         # Do not delete the directory
+         logger.info(f"Temporary build directory: {temp_dir}. Do not delete this directory.")
+
 
     result = build_runtime_image_in_folder(
         base_image=base_image,
@@ -371,6 +376,8 @@ def _build_sandbox_image(
     if versioned_tag is not None:
         names.append(f'{runtime_image_repo}:{versioned_tag}')
     names = [name for name in names if not runtime_builder.image_exists(name, False)]
+    if runtime_builder.is_podman and extra_build_args:
+        extra_build_args = [arg for arg in extra_build_args if arg != '--load']
 
     image_name = runtime_builder.build(
         path=str(build_folder),

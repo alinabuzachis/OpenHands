@@ -97,8 +97,10 @@ def _get_swebench_workspace_dir_name(instance: pd.Series) -> str:
     if DATASET_TYPE == 'SWE-bench-Live':
         return instance.instance_id
     else:
-        return f'{instance.repo}__{instance.version}'.replace('/', '__')
-
+        #return f'{instance.repo}__{instance.version}'.replace('/', '__')
+        # Use the pull number as a substitute for the version
+        # since the version column is missing in the dataset.
+        return f'{instance.repo}__{instance.pull_number}'.replace('/', '__')
 
 def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageAction:
     workspace_dir_name = _get_swebench_workspace_dir_name(instance)
@@ -201,10 +203,11 @@ def get_config(
     # We use a different instance image for the each instance of swe-bench eval
     use_swebench_official_image = DATASET_TYPE != 'SWE-Gym'
 
-    base_container_image = get_instance_docker_image(
-        instance['instance_id'],
-        swebench_official_image=use_swebench_official_image,
-    )
+    #base_container_image = get_instance_docker_image(
+    #    instance['instance_id'],
+    #    swebench_official_image=use_swebench_official_image,
+    #)
+    base_container_image = "python:3.12-slim"
     logger.info(
         f'Using instance container image: {base_container_image}. '
         f'Please make sure this image exists. '
@@ -227,7 +230,7 @@ def get_config(
         run_as_openhands=False,
         max_iterations=metadata.max_iterations,
         enable_browser=RUN_WITH_BROWSING,
-        runtime=os.environ.get('RUNTIME', 'docker'),
+        runtime=os.environ.get('RUNTIME', 'local'),
         sandbox=sandbox_config,
         # do not mount workspace
         workspace_base=None,
@@ -270,16 +273,72 @@ def initialize_runtime(
     obs: CmdOutputObservation
 
     # Set instance id and git configuration
+    # action = CmdRunAction(
+    #     command=f"""echo 'export SWE_INSTANCE_ID={instance['instance_id']}' >> ~/.bashrc && echo 'export PIP_CACHE_DIR=~/.cache/pip' >> ~/.bashrc && echo "alias git='git --no-pager'" >> ~/.bashrc && git config --global core.pager "" && git config --global diff.binary false"""
+    # )
+    # action.set_hard_timeout(600)
+    # logger.info(action, extra={'msg_type': 'ACTION'})
+    # obs = runtime.run_action(action)
+    # logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    # assert_and_raise(
+    #     obs.exit_code == 0,
+    #     f'Failed to export SWE_INSTANCE_ID and configure git: {str(obs)}',
+    # )
+    # Set instance id and pip cache directory
     action = CmdRunAction(
-        command=f"""echo 'export SWE_INSTANCE_ID={instance['instance_id']}' >> ~/.bashrc && echo 'export PIP_CACHE_DIR=~/.cache/pip' >> ~/.bashrc && echo "alias git='git --no-pager'" >> ~/.bashrc && git config --global core.pager "" && git config --global diff.binary false"""
+     command=f"echo 'export SWE_INSTANCE_ID={instance['instance_id']}' >> ~/.bashrc"
     )
     action.set_hard_timeout(600)
     logger.info(action, extra={'msg_type': 'ACTION'})
     obs = runtime.run_action(action)
     logger.info(obs, extra={'msg_type': 'OBSERVATION'})
     assert_and_raise(
-        obs.exit_code == 0,
-        f'Failed to export SWE_INSTANCE_ID and configure git: {str(obs)}',
+     obs.exit_code == 0,
+     f'Failed to export SWE_INSTANCE_ID and configure pip: {str(obs)}',
+    )
+
+    action = CmdRunAction(
+      command=f"echo 'export PIP_CACHE_DIR=~/.cache/pip' >> ~/.bashrc"
+    )
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+      obs.exit_code == 0,
+      f'Failed to export PIP_CACHE_DIR: {str(obs)}',
+    )
+
+    action = CmdRunAction(command=f"echo \"alias git='git --no-pager'\" >> ~/.bashrc")
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+     obs.exit_code == 0,
+     f'Failed to set git diff.binary: {str(obs)}',
+    )
+
+    # Configure global git pager
+    action = CmdRunAction(command=f"git config --global core.pager \"\"")
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+     obs.exit_code == 0,
+     f'Failed to set git core pager: {str(obs)}',
+    )
+
+    # Configure global git diff
+    action = CmdRunAction(command=f"git config --global diff.binary false")
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+     obs.exit_code == 0,
+     f'Failed to set git diff.binary: {str(obs)}',
     )
 
     action = CmdRunAction(command="""export USER=$(whoami); echo USER=${USER} """)
@@ -353,14 +412,87 @@ def initialize_runtime(
         f'Failed to source /swe_util/{entry_script_path}: {str(obs)}',
     )
 
+    #action = CmdRunAction(command=f'cd /workspace/{workspace_dir_name}')
+    #action.set_hard_timeout(600)
+    #logger.info(action, extra={'msg_type': 'ACTION'})
+    #obs = runtime.run_action(action)
+    #logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    #assert_and_raise(
+    #    obs.exit_code == 0,
+    #    f'Failed to cd to /workspace/{workspace_dir_name}: {str(obs)}',
+    #)
+
+    workspace_dir_name = _get_swebench_workspace_dir_name(instance)
+    # Add dynamic git clone
+    action = CmdRunAction(
+        command=f'git clone https://github.com/{instance["repo"]}.git /workspace/{workspace_dir_name}'
+    )
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+        obs.exit_code == 0,
+        f'Failed to clone repository {instance["repo"]}: {str(obs)}',
+    )
+    # Change to the working directory
     action = CmdRunAction(command=f'cd /workspace/{workspace_dir_name}')
-    action.set_hard_timeout(600)
     logger.info(action, extra={'msg_type': 'ACTION'})
     obs = runtime.run_action(action)
     logger.info(obs, extra={'msg_type': 'OBSERVATION'})
     assert_and_raise(
         obs.exit_code == 0,
         f'Failed to cd to /workspace/{workspace_dir_name}: {str(obs)}',
+    )
+
+    # Add dynamic git checkout
+    action = CmdRunAction(
+        command=f'git checkout {instance["base_commit"]}'
+    )
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(obs.exit_code == 0, f'Failed to git checkout: {str(obs)}')
+
+    # Add dynamic pip install for requirements
+    action = CmdRunAction(
+        command=f'pip install -r /workspace/{workspace_dir_name}/requirements.txt'
+    )
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(obs.exit_code == 0, f'Failed to install requirements.txt: {str(obs)}')
+
+    # Add dynamic pip install for test-requirements
+    action = CmdRunAction(
+        command=f'pip install -r /workspace/{workspace_dir_name}/test-requirements.txt'
+    )
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(obs.exit_code == 0, f'Failed to install test-requirements.txt: {str(obs)}')
+
+    # Install the 'ansible' package itself, which is needed by the unit tests.
+    action = CmdRunAction(command='pip install ansible')
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+      obs.exit_code == 0,
+      f'Failed to install ansible: {str(obs)}',
+    )
+
+
+    # Run the unit tests for the Ansible collection.
+    # This command needs to be executed from the root of the cloned repository.
+    action = CmdRunAction(command="pytest tests/unit/")
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+       obs.exit_code == 0,
+       f'Failed to run ansible-test: {str(obs)}',
     )
 
     action = CmdRunAction(command='git reset --hard')
@@ -411,11 +543,12 @@ def initialize_runtime(
         logger.info(action, extra={'msg_type': 'ACTION'})
         obs = runtime.run_action(action)
         logger.info(obs, extra={'msg_type': 'OBSERVATION'})
-        assert_and_raise(
-            obs.exit_code == 0 and 'testbed' in obs.content,
-            f'Expected to find python interpreter from testbed, but got: {str(obs)}',
-        )
+        #assert_and_raise(
+        #    obs.exit_code == 0 and 'testbed' in obs.content,
+        #    f'Expected to find python interpreter from testbed, but got: {str(obs)}',
+        #)
 
+    
     logger.info('-' * 30)
     logger.info('END Runtime Initialization Fn')
     logger.info('-' * 30)
@@ -757,12 +890,12 @@ if __name__ == '__main__':
 
     # NOTE: It is preferable to load datasets from huggingface datasets and perform post-processing
     # so we don't need to manage file uploading to OpenHands's repo
-    dataset = load_dataset(args.dataset, split=args.split)
+    dataset = load_dataset("json", data_files=args.dataset)
 
     # Set the global dataset type based on dataset name
     set_dataset_type(args.dataset)
 
-    swe_bench_tests = filter_dataset(dataset.to_pandas(), 'instance_id')
+    swe_bench_tests = filter_dataset(dataset["train"].to_pandas(), 'instance_id')
     logger.info(
         f'Loaded dataset {args.dataset} with split {args.split}: {len(swe_bench_tests)} tasks'
     )
@@ -840,12 +973,25 @@ if __name__ == '__main__':
     if not ITERATIVE_EVAL_MODE:
         # load the dataset
         instances = prepare_dataset(swe_bench_tests, output_file, args.eval_n_limit)
-        if len(instances) > 0 and not isinstance(
-            instances['PASS_TO_PASS'][instances['PASS_TO_PASS'].index[0]], str
-        ):
-            for col in ['PASS_TO_PASS', 'FAIL_TO_PASS']:
-                instances[col] = instances[col].apply(lambda x: str(x))
+        #if len(instances) > 0 and not isinstance(
+        #    instances['PASS_TO_PASS'][instances['PASS_TO_PASS'].index[0]], str
+        #):
+        #    for col in ['PASS_TO_PASS', 'FAIL_TO_PASS']:
+        #        if col not in instances.columns:
+        #          instances[col] = [[]] * len(instances)
+        #        else:
+        #          instances[col] = instances[col].apply(lambda x: str(x))
+        if len(instances) > 0:
+          # Check and add 'PASS_TO_PASS' and 'FAIL_TO_PASS' columns if they are missing.
+          # Your custom dataset likely doesn't have them.
+          if 'PASS_TO_PASS' not in instances.columns:
+             instances['PASS_TO_PASS'] = [[] for _ in range(len(instances))]
+          if 'FAIL_TO_PASS' not in instances.columns:
+             instances['FAIL_TO_PASS'] = [[] for _ in range(len(instances))]
 
+          if not isinstance(instances['PASS_TO_PASS'][instances['PASS_TO_PASS'].index[0]], str):
+             for col in ['PASS_TO_PASS', 'FAIL_TO_PASS']:
+               instances[col] = instances[col].apply(lambda x: str(x))
         run_evaluation(
             instances,
             metadata,

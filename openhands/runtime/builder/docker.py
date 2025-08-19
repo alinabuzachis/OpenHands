@@ -126,15 +126,14 @@ class DockerRuntimeBuilder(RuntimeBuilder):
         target_image_repo, target_image_source_tag = target_image_hash_name.split(':')
         target_image_tag = tags[1].split(':')[1] if len(tags) > 1 else None
 
+        # Fixed syntax error with missing quote and removed buildx flags
         buildx_cmd = [
             'docker' if not self.is_podman else 'podman',
-            'buildx',
             'build',
             '--progress=plain',
             f'--build-arg=OPENHANDS_RUNTIME_VERSION={oh_version}',
             f'--build-arg=OPENHANDS_RUNTIME_BUILD_TIME={datetime.datetime.now().isoformat()}',
             f'--tag={target_image_hash_name}',
-            '--load',
         ]
 
         # Include the platform argument only if platform is specified
@@ -159,13 +158,9 @@ class DockerRuntimeBuilder(RuntimeBuilder):
             f'================ {buildx_cmd[0].upper()} BUILD STARTED ================'
         )
 
-        builder_cmd = ['docker', 'buildx', 'use', 'default']
-        subprocess.Popen(
-            builder_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-        )
+        # Removed the builder_cmd block as it's not compatible with Podman
+        # builder_cmd = ['docker', 'buildx', 'use', 'default']
+        # subprocess.Popen(...)
 
         try:
             process = subprocess.Popen(
